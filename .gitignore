@@ -1,0 +1,8 @@
+.venv/
+Unlimited-OCR/
+outputs/
+inputs/
+*.log
+__pycache__/
+*.pyc
+
