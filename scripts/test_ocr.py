@@ -93,7 +93,9 @@ def load_model(attn_implementation: str):
     return model
 
 
-def ocr_one(tokenizer, model, image_path: str, output_path: str, mode_params: dict) -> tuple[float, float | None]:
+def ocr_one(tokenizer, model, image_path: str, output_path: str, mode_params: dict,
+            max_length: int, no_repeat_ngram_size: int, ngram_window: int,
+            temperature: float) -> tuple[float, float | None]:
     """Runs infer() on one image, returns (elapsed_seconds, peak_vram_gb|None)."""
     t0 = time.perf_counter()
     if torch.cuda.is_available():
@@ -103,9 +105,10 @@ def ocr_one(tokenizer, model, image_path: str, output_path: str, mode_params: di
         prompt=PROMPT,
         image_file=image_path,
         output_path=output_path,
-        max_length=MAX_LENGTH,
-        no_repeat_ngram_size=35,
-        ngram_window=128,
+        max_length=max_length,
+        no_repeat_ngram_size=no_repeat_ngram_size,
+        ngram_window=ngram_window,
+        temperature=temperature,
         save_results=True,
         **mode_params,
     )
@@ -128,7 +131,9 @@ def run_single_image(args, tokenizer, model, run_t0: float) -> None:
     })
 
     print(f"Running OCR on {args.input_path} (mode={args.mode})...")
-    elapsed, peak_vram = ocr_one(tokenizer, model, args.input_path, output_path, mode_params)
+    elapsed, peak_vram = ocr_one(tokenizer, model, args.input_path, output_path, mode_params,
+                                  args.max_length, args.no_repeat_ngram_size, args.ngram_window,
+                                  args.temperature)
     vram_str = f", peak VRAM {peak_vram:.2f}GB" if peak_vram is not None else ""
     print(f"Done in {elapsed:.1f}s{vram_str}")
 
@@ -177,7 +182,9 @@ def run_folder(args, tokenizer, model, run_t0: float) -> None:
             continue
 
         print(f"[{idx}/{end}] OCR-ing {image_path}...")
-        elapsed, peak_vram = ocr_one(tokenizer, model, image_path, item_dir, mode_params)
+        elapsed, peak_vram = ocr_one(tokenizer, model, image_path, item_dir, mode_params,
+                                      args.max_length, args.no_repeat_ngram_size, args.ngram_window,
+                                      args.temperature)
         item_timings.append((idx, elapsed))
         vram_str = f", peak VRAM {peak_vram:.2f}GB" if peak_vram is not None else ""
         print(f"[{idx}/{end}] done in {elapsed:.1f}s{vram_str}")
@@ -232,6 +239,22 @@ def main():
     parser.add_argument("--tag", default=None,
                          help="Explicit output-namespace override, for A/B testing settings "
                               "without recomputing under the default layout")
+    parser.add_argument("--temperature", type=float, default=0.0,
+                         help="0.0 (default) = greedy decoding. On unclear/handwritten content, greedy "
+                              "decoding can get stuck in a degenerate loop that no-repeat-ngram doesn't "
+                              "catch (e.g. a repeated fraction interleaved with an incrementing counter, "
+                              "so no fixed-size window repeats verbatim). If a specific image loops, "
+                              "retry it with e.g. --temperature 0.2-0.4 to break out via sampling.")
+    parser.add_argument("--no-repeat-ngram-size", type=int, default=35,
+                         help="Block repeats of this many consecutive tokens (default: 35). Lower it "
+                              "(e.g. 10-15) to catch shorter repeating sub-phrases on a looping image.")
+    parser.add_argument("--ngram-window", type=int, default=128,
+                         help="How far back to look for repeats (default: 128 tokens).")
+    parser.add_argument("--max-length", type=int, default=MAX_LENGTH,
+                         help=f"Hard cap on total sequence length (prompt+image+output tokens), default "
+                              f"{MAX_LENGTH}. Generation stops (possibly mid-result) once hit — use a "
+                              f"lower value (e.g. 6000) as a time-bound safety net when retrying a "
+                              f"looping image, since a normal page/image needs nowhere near this many.")
     args = parser.parse_args()
     run_t0 = time.perf_counter()
 

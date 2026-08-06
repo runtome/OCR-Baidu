@@ -133,6 +133,38 @@ Real multi-page batching (processing several pages in one GPU forward pass) and 
 post-processing step are both deliberately out of scope — see the module docstring in `test_ocr_pdf.py`
 for why.
 
+## Troubleshooting: an image/page loops forever
+
+On unclear or handwritten content, the model can fall into a degenerate loop — e.g. repeating a LaTeX
+fraction interleaved with an incrementing counter (`\frac{1}{2}, \frac{1}{2}, 1, \frac{1}{2}, 2, ...`)
+seemingly forever. This happens because generation defaults to **greedy decoding** (always pick the
+single most-likely next token), which can lock into a repeating cycle when the model is unsure what
+it's looking at. The built-in `--no-repeat-ngram-size`/`--ngram-window` guard doesn't catch it because
+the loop isn't a literal repeat — the counter keeps changing, so no fixed-size window of tokens repeats
+verbatim. Left alone, it only stops once it hits `--max-length` (32768 tokens by default), which can
+take many minutes on a single bad image.
+
+If you see an item stuck like this: interrupt the run (Ctrl+C — already-completed items are skipped on
+rerun, so this loses nothing), then retry just that one item with sampling enabled and a lower length cap:
+
+```bash
+uv run python scripts/test_ocr.py inputs/images/problem_image.jpg --temperature 0.3 --max-length 6000
+```
+
+- `--temperature 0.3` switches from greedy decoding to sampling, which adds enough randomness to escape
+  the loop. `0.0` (default) is greedy/deterministic; try `0.2`-`0.4` if a retry still loops.
+- `--max-length 6000` bounds worst-case time — a normal image/page needs nowhere near this many tokens
+  (prompt + image + output combined), so if it's still looping this cuts it off in well under a minute
+  instead of running toward the full 32768.
+- `--no-repeat-ngram-size`/`--ngram-window` (default `35`/`128`) can also be tightened (e.g. `10`/`64`)
+  to block shorter repeating sub-phrases, if temperature alone doesn't help.
+
+These four flags work the same way on both `test_ocr.py` and `test_ocr_pdf.py` (for PDFs, retry a single
+page with `--start N --end N`). They're intentionally left out of the `settings.json` consistency guard
+(see [Speed / fidelity tuning](#speed--fidelity-tuning)) since they're meant for one-off retries, not a
+document-wide setting — an in-progress run using the defaults keeps resuming normally even after
+upgrading to a version of the script with these flags.
+
 ## Notes
 
 - Both `test_ocr.py` and `test_ocr_pdf.py` default to "gundam" mode (`base_size=1024, image_size=640,

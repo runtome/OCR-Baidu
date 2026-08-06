@@ -132,6 +132,23 @@ def main():
     parser.add_argument("--tag", default=None,
                          help="Explicit output-namespace override, for A/B testing settings "
                               "without recomputing pages under the default layout")
+    parser.add_argument("--temperature", type=float, default=0.0,
+                         help="0.0 (default) = greedy decoding. On unclear/handwritten content, greedy "
+                              "decoding can get stuck in a degenerate loop that no-repeat-ngram doesn't "
+                              "catch (e.g. a repeated fraction interleaved with an incrementing counter, "
+                              "so no fixed-size window repeats verbatim). If a specific page loops, "
+                              "retry it (--start N --end N) with e.g. --temperature 0.2-0.4 to break "
+                              "out via sampling.")
+    parser.add_argument("--no-repeat-ngram-size", type=int, default=35,
+                         help="Block repeats of this many consecutive tokens (default: 35). Lower it "
+                              "(e.g. 10-15) to catch shorter repeating sub-phrases on a looping page.")
+    parser.add_argument("--ngram-window", type=int, default=128,
+                         help="How far back to look for repeats (default: 128 tokens).")
+    parser.add_argument("--max-length", type=int, default=MAX_LENGTH,
+                         help=f"Hard cap on total sequence length (prompt+image+output tokens), default "
+                              f"{MAX_LENGTH}. Generation stops (possibly mid-result) once hit — use a "
+                              f"lower value (e.g. 6000) as a time-bound safety net when retrying a "
+                              f"looping page, since a normal page needs nowhere near this many.")
     args = parser.parse_args()
     run_t0 = time.perf_counter()
 
@@ -184,9 +201,10 @@ def main():
             prompt=PROMPT,
             image_file=image_path,
             output_path=page_dir,
-            max_length=MAX_LENGTH,
-            no_repeat_ngram_size=35,
-            ngram_window=128,
+            max_length=args.max_length,
+            no_repeat_ngram_size=args.no_repeat_ngram_size,
+            ngram_window=args.ngram_window,
+            temperature=args.temperature,
             save_results=True,
             **mode_params,
         )
